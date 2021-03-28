@@ -1,0 +1,11 @@
+module load python/3.7.7-fasrc01; module load cuda/9.2.88-fasrc01; source activate deep-svdd; module load GCCcore/8.2.0
+
+python main.py mnist mnist_LeNet ../log/mnist-test /n/pfister_lab2/Lab/enovikov/shared/Data/MNIST --objective one-class --lr 0.0001 --n_epochs 150 --lr_milestone 50 --batch_size 200 --weight_decay 0.5e-6 --pretrain True --ae_lr 0.0001 --ae_n_epochs 150 --ae_lr_milestone 50 --ae_batch_size 200 --ae_weight_decay 0.5e-3 --normal_class 3;
+
+After `module list`:
+'''
+(deep-svdd) [enovikov@holygpu7c1701 src]$ module list
+
+Currently Loaded Modules:
+  1) Anaconda3/5.0.1-fasrc01   2) python/3.6.3-fasrc01   3) cuda/9.2.88-fasrc01   4) GCCcore/6.4.0
+'''
