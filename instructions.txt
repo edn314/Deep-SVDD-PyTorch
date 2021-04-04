@@ -9,3 +9,7 @@ After `module list`:
 Currently Loaded Modules:
   1) Anaconda3/5.0.1-fasrc01   2) python/3.6.3-fasrc01   3) cuda/9.2.88-fasrc01   4) GCCcore/6.4.0
 '''
+
+FOR CYCIF:
+
+python main.py cycif cycif_Net ../log/cycif-test /n/pfister_lab2/Lab/enovikov/data/Artifact-CyCIF-Data-2021/Sardana-Annotations/Edward/train/data/ --objective one-class --lr 0.0001 --n_epochs 10 --lr_milestone 50 --batch_size 16 --weight_decay 0.5e-6 --pretrain True --ae_lr 0.0001 --ae_n_epochs 10 --ae_lr_milestone 50 --ae_batch_size 16 --ae_weight_decay 0.5e-3;

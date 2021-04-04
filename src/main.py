@@ -14,8 +14,8 @@ from datasets.main import load_dataset
 # Settings
 ################################################################################
 @click.command()
-@click.argument('dataset_name', type=click.Choice(['mnist', 'cifar10']))
-@click.argument('net_name', type=click.Choice(['mnist_LeNet', 'cifar10_LeNet', 'cifar10_LeNet_ELU']))
+@click.argument('dataset_name', type=click.Choice(['mnist', 'cifar10', 'cycif']))
+@click.argument('net_name', type=click.Choice(['mnist_LeNet', 'cifar10_LeNet', 'cifar10_LeNet_ELU', 'cycif_Net']))
 @click.argument('xp_path', type=click.Path(exists=True))
 @click.argument('data_path', type=click.Path(exists=True))
 @click.option('--load_config', type=click.Path(exists=True), default=None,
@@ -141,7 +141,7 @@ def main(dataset_name, net_name, xp_path, data_path, load_config, load_model, ob
                            weight_decay=cfg.settings['ae_weight_decay'],
                            device=device,
                            n_jobs_dataloader=n_jobs_dataloader)
-
+    
     # Log training details
     logger.info('Training optimizer: %s' % cfg.settings['optimizer_name'])
     logger.info('Training learning rate: %g' % cfg.settings['lr'])
@@ -160,7 +160,7 @@ def main(dataset_name, net_name, xp_path, data_path, load_config, load_model, ob
                     weight_decay=cfg.settings['weight_decay'],
                     device=device,
                     n_jobs_dataloader=n_jobs_dataloader)
-
+    
     # Test model
     deep_SVDD.test(dataset, device=device, n_jobs_dataloader=n_jobs_dataloader)
 
@@ -169,18 +169,45 @@ def main(dataset_name, net_name, xp_path, data_path, load_config, load_model, ob
     indices, labels, scores = np.array(indices), np.array(labels), np.array(scores)
     idx_sorted = indices[labels == 0][np.argsort(scores[labels == 0])]  # sorted from lowest to highest anomaly score
 
-    if dataset_name in ('mnist', 'cifar10'):
+    if dataset_name in ('mnist', 'cifar10', 'cycif'):
 
         if dataset_name == 'mnist':
             X_normals = dataset.test_set.test_data[idx_sorted[:32], ...].unsqueeze(1)
             X_outliers = dataset.test_set.test_data[idx_sorted[-32:], ...].unsqueeze(1)
 
+            plot_images_grid(X_normals, export_img=xp_path + '/normals', title='Most normal examples', padding=2)
+            plot_images_grid(X_outliers, export_img=xp_path + '/outliers', title='Most anomalous examples', padding=2)
+        
         if dataset_name == 'cifar10':
             X_normals = torch.tensor(np.transpose(dataset.test_set.test_data[idx_sorted[:32], ...], (0, 3, 1, 2)))
             X_outliers = torch.tensor(np.transpose(dataset.test_set.test_data[idx_sorted[-32:], ...], (0, 3, 1, 2)))
 
-        plot_images_grid(X_normals, export_img=xp_path + '/normals', title='Most normal examples', padding=2)
-        plot_images_grid(X_outliers, export_img=xp_path + '/outliers', title='Most anomalous examples', padding=2)
+            plot_images_grid(X_normals, export_img=xp_path + '/normals', title='Most normal examples', padding=2)
+            plot_images_grid(X_outliers, export_img=xp_path + '/outliers', title='Most anomalous examples', padding=2)
+
+        if dataset_name == 'cycif':
+            # Lowest to highest uncertainty scores
+            idx_sorted_all = indices[np.argsort(scores)]
+            labels_sorted_all = labels[np.argsort(scores)]
+            scores_sorted_all = np.sort(scores)
+
+            for i in range(32):
+                idx = idx_sorted_all[i]   
+                X = dataset.test_set[idx][0].unsqueeze(1)
+                # From test images, extract the ones model predicts as normal with highest confidence (better)
+                plot_images_labels(X, label = labels_sorted_all[i], export_img=xp_path + '/simple_img_'+str(i), title='Simplest Example: Score = {:4.2f}'.format(scores_sorted_all[i]), padding=2)
+
+            # Highest to lowest uncertainty scores
+            idx_sorted_all = np.flip(idx_sorted_all)
+            labels_sorted_all = np.flip(labels_sorted_all)
+            scores_sorted_all = np.flip(scores_sorted_all)
+
+            for i in range(32):
+                idx = idx_sorted_all[i]
+                X = dataset.test_set[idx][0].unsqueeze(1)
+                # From test images, extract the ones model predicts as normal with lowest confidence (worse)
+                plot_images_labels(X, label = labels_sorted_all[i], export_img=xp_path + '/difficult_img_'+str(i), title='Difficult Example: Score = {:4.2f}'.format(scores_sorted_all[i]), padding=2)
+
 
     # Save results, model, and configuration
     deep_SVDD.save_results(export_json=xp_path + '/results.json')
