@@ -6,6 +6,7 @@ import numpy as np
 
 from utils.config import Config
 from utils.visualization.plot_images_grid import plot_images_grid
+from utils.visualization.plot_images_labels import plot_images_labels
 from deepSVDD import DeepSVDD
 from datasets.main import load_dataset
 
@@ -164,6 +165,14 @@ def main(dataset_name, net_name, xp_path, data_path, load_config, load_model, ob
     # Test model
     deep_SVDD.test(dataset, device=device, n_jobs_dataloader=n_jobs_dataloader)
 
+    # Save results, model, and configuration
+    deep_SVDD.save_results(export_json=xp_path + '/results.json')
+    if pretrain:
+        deep_SVDD.save_model(export_model=xp_path + '/model.tar')
+    else:
+        deep_SVDD.save_model(export_model=xp_path + '/model.tar', save_ae=False)
+    cfg.save_config(export_json=xp_path + '/config.json')
+    
     # Plot most anomalous and most normal (within-class) test samples
     indices, labels, scores = zip(*deep_SVDD.results['test_scores'])
     indices, labels, scores = np.array(indices), np.array(labels), np.array(scores)
@@ -195,7 +204,7 @@ def main(dataset_name, net_name, xp_path, data_path, load_config, load_model, ob
                 idx = idx_sorted_all[i]   
                 X = dataset.test_set[idx][0].unsqueeze(1)
                 # From test images, extract the ones model predicts as normal with highest confidence (better)
-                plot_images_labels(X, label = labels_sorted_all[i], export_img=xp_path + '/simple_img_'+str(i), title='Simplest Example: Score = {:4.2f}'.format(scores_sorted_all[i]), padding=2)
+                plot_images_labels(X, label = labels_sorted_all[i], export_img=xp_path + '/images/simple_img_'+str(i), title='Simplest Example: Score = {:4.2f}'.format(scores_sorted_all[i]), padding=2)
 
             # Highest to lowest uncertainty scores
             idx_sorted_all = np.flip(idx_sorted_all)
@@ -206,13 +215,7 @@ def main(dataset_name, net_name, xp_path, data_path, load_config, load_model, ob
                 idx = idx_sorted_all[i]
                 X = dataset.test_set[idx][0].unsqueeze(1)
                 # From test images, extract the ones model predicts as normal with lowest confidence (worse)
-                plot_images_labels(X, label = labels_sorted_all[i], export_img=xp_path + '/difficult_img_'+str(i), title='Difficult Example: Score = {:4.2f}'.format(scores_sorted_all[i]), padding=2)
-
-
-    # Save results, model, and configuration
-    deep_SVDD.save_results(export_json=xp_path + '/results.json')
-    deep_SVDD.save_model(export_model=xp_path + '/model.tar')
-    cfg.save_config(export_json=xp_path + '/config.json')
+                plot_images_labels(X, label = labels_sorted_all[i], export_img=xp_path + '/images/difficult_img_'+str(i), title='Difficult Example: Score = {:4.2f}'.format(scores_sorted_all[i]), padding=2)
 
 
 if __name__ == '__main__':

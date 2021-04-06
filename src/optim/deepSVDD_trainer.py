@@ -3,6 +3,8 @@ from base.base_dataset import BaseADDataset
 from base.base_net import BaseNet
 from torch.utils.data.dataloader import DataLoader
 from sklearn.metrics import roc_auc_score
+from sklearn.cluster import MiniBatchKMeans
+from sklearn.cluster import KMeans
 
 import logging
 import time
@@ -51,7 +53,7 @@ class DeepSVDDTrainer(BaseTrainer):
 
         # Set learning rate scheduler
         scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=self.lr_milestones, gamma=0.1)
-
+        
         # Initialize hypersphere center c (if c not loaded)
         if self.c is None:
             logger.info('Initializing center c...')
@@ -80,7 +82,17 @@ class DeepSVDDTrainer(BaseTrainer):
 
                 # Update network parameters via backpropagation: forward + backward + optimize
                 outputs = net(inputs)
-                dist = torch.sum((outputs - self.c) ** 2, dim=1)
+                # dist = torch.sum((outputs - self.c) ** 2, dim=1)
+                
+                ### NEW - Return Kmeans from c_init, call predict here, get indices, take dist, sum/mean for loss
+                clus_indices = self.kmeans.predict(outputs.detach().cpu().numpy())
+                dist = torch.zeros(outputs.shape[0], device=self.device)
+                for i in range(outputs.shape[0]):
+                    # Sum dists from each data point to its corresponding cluster
+                    cluster = clus_indices[i]
+                    dist[i] = torch.sum((outputs[i] - self.c[:,cluster]) ** 2)
+                    # import pdb; pdb.set_trace()
+                ###
                 if self.objective == 'soft-boundary':
                     scores = dist - self.R ** 2
                     loss = self.R ** 2 + (1 / self.nu) * torch.mean(torch.max(torch.zeros_like(scores), scores))
@@ -127,7 +139,19 @@ class DeepSVDDTrainer(BaseTrainer):
                 inputs, labels, idx = data
                 inputs = inputs.to(self.device)
                 outputs = net(inputs)
-                dist = torch.sum((outputs - self.c) ** 2, dim=1)
+                # dist = torch.sum((outputs - self.c) ** 2, dim=1)
+
+                ### NEW
+                #clus_indices = self.kmeans.predict(outputs.detach().cpu().numpy())
+                centers = torch.transpose(self.c,0,1)
+                dist = torch.zeros(outputs.shape[0], device=self.device)
+                for i in range(outputs.shape[0]):
+                    # Sum dists from each data point to its corresponding cluster
+                    #cluster = clus_indices[i]
+                    #dist[i] = torch.sum((outputs[i] - self.c[:,cluster]) ** 2)
+                    dist[i] = torch.sum((centers - outputs[i]) ** 2, dim=1).min()
+                #import pdb; pdb.set_trace()
+                ###
                 if self.objective == 'soft-boundary':
                     scores = dist - self.R ** 2
                 else:
@@ -155,26 +179,58 @@ class DeepSVDDTrainer(BaseTrainer):
 
     def init_center_c(self, train_loader: DataLoader, net: BaseNet, eps=0.1):
         """Initialize hypersphere center c as the mean from an initial forward pass on the data."""
-        n_samples = 0
-        c = torch.zeros(net.rep_dim, device=self.device)
+        # n_samples = 0
+        # c = torch.zeros(net.rep_dim, device=self.device)
 
         net.eval()
+        # with torch.no_grad():
+        #     for data in train_loader:
+        #         # get the inputs of the batch
+        #         inputs, _, _ = data
+        #         inputs = inputs.to(self.device)
+        #         outputs = net(inputs)
+        #         n_samples += outputs.shape[0]
+        #         c += torch.sum(outputs, dim=0)
+
+        # c /= n_samples
+        # cen = c
+
+        ### NEW multi-center code - make (kmeans.cluster_centers_).T a tensor and keep adding to each cluster center. Then take average.
+        K = 4 # number of clusters
+        print("Initializing {} clusters".format(K))
+        n_samples = torch.zeros(K, device=self.device)
+        cen = torch.zeros(net.rep_dim, K, device=self.device)
+        self.kmeans = MiniBatchKMeans(n_clusters=K,random_state=0,batch_size=2,max_iter=10)
         with torch.no_grad():
+            # i = 0
             for data in train_loader:
                 # get the inputs of the batch
                 inputs, _, _ = data
                 inputs = inputs.to(self.device)
                 outputs = net(inputs)
-                n_samples += outputs.shape[0]
-                c += torch.sum(outputs, dim=0)
-
-        c /= n_samples
+                if (outputs.shape[0] < K):
+                    break
+                self.kmeans = self.kmeans.partial_fit(outputs)
+                # if (i%20 == 0):
+                #     print(i)
+                #     import pdb; pdb.set_trace()
+                # i += 1
+                cluster_centers = torch.from_numpy(self.kmeans.cluster_centers_.T)
+                cluster_centers = cluster_centers.type(torch.FloatTensor)
+                cluster_centers = cluster_centers.to(self.device)
+                n = outputs.shape[0]//K
+                for k in range(K):
+                    n_samples[k] += n
+                    cen[:,k] += cluster_centers[:,k]
+        
+        cen = torch.div(cen, n_samples)
+        ### 
 
         # If c_i is too close to 0, set to +-eps. Reason: a zero unit can be trivially matched with zero weights.
-        c[(abs(c) < eps) & (c < 0)] = -eps
-        c[(abs(c) < eps) & (c > 0)] = eps
+        cen[(abs(cen) < eps) & (cen < 0)] = -eps
+        cen[(abs(cen) < eps) & (cen > 0)] = eps
 
-        return c
+        return cen
 
 
 def get_radius(dist: torch.Tensor, nu: float):

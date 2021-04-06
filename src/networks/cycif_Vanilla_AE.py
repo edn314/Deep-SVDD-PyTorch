@@ -21,13 +21,15 @@ class CyCIF_VanillaNetwork(BaseNet):
                     nn.Conv2d(in_channels, out_channels=h_dim,
                             kernel_size= 3, 
                             stride= 2,
-                            padding  = 1),
+                            padding  = 1,
+                            bias=False),
                     nn.BatchNorm2d(h_dim),
                     nn.LeakyReLU(),
                     nn.Conv2d(h_dim, out_channels=h_dim,
                             kernel_size= 3,
                             stride= 1,
-                            padding  = 1),
+                            padding  = 1,
+                            bias=False),
                     nn.BatchNorm2d(h_dim),
                     nn.LeakyReLU(),
                     )
@@ -35,7 +37,7 @@ class CyCIF_VanillaNetwork(BaseNet):
             in_channels = h_dim
 
         self.encoder = nn.Sequential(*modules) 
-        self.encoder_output = nn.Linear(hidden_dims[-1]*64, self.rep_dim)
+        self.encoder_output = nn.Linear(hidden_dims[-1]*64, self.rep_dim, bias=False)
 
     def forward(self, x):
         x = self.encoder(x)
@@ -63,13 +65,15 @@ class CyCIF_VanillaAE(BaseNet):
                     nn.Conv2d(in_channels, out_channels=h_dim,
                               kernel_size= 3, 
                               stride= 2,
-                              padding  = 1),
+                              padding  = 1,
+                              bias=False),
                     nn.BatchNorm2d(h_dim),
                     nn.LeakyReLU(),
                     nn.Conv2d(h_dim, out_channels=h_dim,
                               kernel_size= 3,
                               stride= 1,
-                              padding  = 1),
+                              padding  = 1,
+                              bias=False),
                     nn.BatchNorm2d(h_dim),
                     nn.LeakyReLU(),
                     )
@@ -77,12 +81,12 @@ class CyCIF_VanillaAE(BaseNet):
             in_channels = h_dim
 
         self.encoder = nn.Sequential(*modules) 
-        self.encoder_output = nn.Linear(hidden_dims[-1]*64, self.rep_dim) # CHANGE FOR DIFFERENT DATASETS
+        self.encoder_output = nn.Linear(hidden_dims[-1]*64, self.rep_dim, bias=False) # CHANGE FOR DIFFERENT DATASETS
 
         # Build Decoder
         modules = []
 
-        self.decoder_input = nn.Linear(self.rep_dim, hidden_dims[-1]*64) # CHANGE FOR DIFFERENT DATASETS
+        self.decoder_input = nn.Linear(self.rep_dim, hidden_dims[-1]*64, bias=False) # CHANGE FOR DIFFERENT DATASETS
 
         hidden_dims.reverse()
 
@@ -94,13 +98,15 @@ class CyCIF_VanillaAE(BaseNet):
                                        kernel_size=3, 
                                        stride = 2,
                                        padding=1,
-                                       output_padding=1),
+                                       output_padding=1,
+                                       bias=False),
                     nn.BatchNorm2d(hidden_dims[i + 1]),
                     nn.LeakyReLU(),
                     nn.Conv2d(hidden_dims[i + 1], hidden_dims[i + 1],
                               kernel_size= 3,
                               stride= 1,
-                              padding  = 1),
+                              padding  = 1,
+                              bias=False),
                     nn.BatchNorm2d(hidden_dims[i + 1]),
                     nn.LeakyReLU(),
                     )
@@ -114,13 +120,15 @@ class CyCIF_VanillaAE(BaseNet):
                                                kernel_size=3,
                                                stride=2,
                                                padding=1,
-                                               output_padding=1),
+                                               output_padding=1,
+                                               bias=False),
                             nn.BatchNorm2d(hidden_dims[-1]),
                             nn.LeakyReLU(),
                             nn.Conv2d(hidden_dims[-1], 
                                     out_channels= 1,
                                     kernel_size= 3, 
-                                    padding= 1),
+                                    padding= 1,
+                                    bias=False),
                             # nn.Tanh())
                             nn.Sigmoid())
 
