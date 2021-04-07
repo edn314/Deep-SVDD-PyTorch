@@ -25,7 +25,7 @@ class DeepSVDD(object):
         results: A dictionary to save the results.
     """
 
-    def __init__(self, objective: str = 'one-class', nu: float = 0.1):
+    def __init__(self, objective: str = 'one-class', nu: float = 0.1, K: int = 1):
         """Inits DeepSVDD with one of the two objectives and hyperparameter nu."""
 
         assert objective in ('one-class', 'soft-boundary'), "Objective must be either 'one-class' or 'soft-boundary'."
@@ -34,6 +34,7 @@ class DeepSVDD(object):
         self.nu = nu
         self.R = 0.0  # hypersphere radius R
         self.c = None  # hypersphere center c
+        self.K = K # number of hyperspheres
 
         self.net_name = None
         self.net = None  # neural network \phi
@@ -63,7 +64,7 @@ class DeepSVDD(object):
         """Trains the Deep SVDD model on the training data."""
 
         self.optimizer_name = optimizer_name
-        self.trainer = DeepSVDDTrainer(self.objective, self.R, self.c, self.nu, optimizer_name, lr=lr,
+        self.trainer = DeepSVDDTrainer(self.objective, self.R, self.c, self.nu, self.K, optimizer_name, lr=lr,
                                        n_epochs=n_epochs, lr_milestones=lr_milestones, batch_size=batch_size,
                                        weight_decay=weight_decay, device=device, n_jobs_dataloader=n_jobs_dataloader)
         # Get the model
@@ -76,7 +77,7 @@ class DeepSVDD(object):
         """Tests the Deep SVDD model on the test data."""
 
         if self.trainer is None:
-            self.trainer = DeepSVDDTrainer(self.objective, self.R, self.c, self.nu,
+            self.trainer = DeepSVDDTrainer(self.objective, self.R, self.c, self.nu, self.K,
                                            device=device, n_jobs_dataloader=n_jobs_dataloader)
 
         self.trainer.test(dataset, self.net)
@@ -111,6 +112,14 @@ class DeepSVDD(object):
         net_dict.update(ae_net_dict)
         # Load the new state_dict
         self.net.load_state_dict(net_dict)
+
+    def load_pretrained_AE_model(self,model_path):
+        """Load pretained AE model from Deep SVDD model_path, apply to Deep SVDD network \phi"""
+        model_dict = torch.load(model_path)
+
+        self.ae_net = build_autoencoder(self.net_name)
+        self.ae_net.load_state_dict(model_dict['ae_net_dict'])
+        self.init_network_weights_from_pretraining()
 
     def save_model(self, export_model, save_ae=True):
         """Save Deep SVDD model to export_model."""

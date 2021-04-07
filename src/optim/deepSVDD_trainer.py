@@ -5,6 +5,11 @@ from torch.utils.data.dataloader import DataLoader
 from sklearn.metrics import roc_auc_score
 from sklearn.cluster import MiniBatchKMeans
 from sklearn.cluster import KMeans
+import scipy
+import matplotlib.pyplot as plt
+from sklearn.preprocessing import StandardScaler
+import umap
+from yellowbrick.cluster import SilhouetteVisualizer
 
 import logging
 import time
@@ -15,7 +20,7 @@ import numpy as np
 
 class DeepSVDDTrainer(BaseTrainer):
 
-    def __init__(self, objective, R, c, nu: float, optimizer_name: str = 'adam', lr: float = 0.001, n_epochs: int = 150,
+    def __init__(self, objective, R, c, nu: float, K: int, optimizer_name: str = 'adam', lr: float = 0.001, n_epochs: int = 150,
                  lr_milestones: tuple = (), batch_size: int = 128, weight_decay: float = 1e-6, device: str = 'cuda',
                  n_jobs_dataloader: int = 0):
         super().__init__(optimizer_name, lr, n_epochs, lr_milestones, batch_size, weight_decay, device,
@@ -28,6 +33,7 @@ class DeepSVDDTrainer(BaseTrainer):
         self.R = torch.tensor(R, device=self.device)  # radius R initialized with 0 by default.
         self.c = torch.tensor(c, device=self.device) if c is not None else None
         self.nu = nu
+        self.K = K
 
         # Optimization parameters
         self.warm_up_n_epochs = 10  # number of training epochs for soft-boundary Deep SVDD before radius R gets updated
@@ -84,14 +90,13 @@ class DeepSVDDTrainer(BaseTrainer):
                 outputs = net(inputs)
                 # dist = torch.sum((outputs - self.c) ** 2, dim=1)
                 
-                ### NEW - Return Kmeans from c_init, call predict here, get indices, take dist, sum/mean for loss
-                clus_indices = self.kmeans.predict(outputs.detach().cpu().numpy())
+                ### NEW - get closest cluster center, take dist, sum/mean for loss
+                centers = torch.transpose(self.c,0,1)
                 dist = torch.zeros(outputs.shape[0], device=self.device)
                 for i in range(outputs.shape[0]):
                     # Sum dists from each data point to its corresponding cluster
-                    cluster = clus_indices[i]
-                    dist[i] = torch.sum((outputs[i] - self.c[:,cluster]) ** 2)
-                    # import pdb; pdb.set_trace()
+                    dist[i] = torch.sum((centers - outputs[i]) ** 2, dim=1).min()
+                #import pdb; pdb.set_trace()
                 ###
                 if self.objective == 'soft-boundary':
                     scores = dist - self.R ** 2
@@ -142,13 +147,10 @@ class DeepSVDDTrainer(BaseTrainer):
                 # dist = torch.sum((outputs - self.c) ** 2, dim=1)
 
                 ### NEW
-                #clus_indices = self.kmeans.predict(outputs.detach().cpu().numpy())
                 centers = torch.transpose(self.c,0,1)
                 dist = torch.zeros(outputs.shape[0], device=self.device)
                 for i in range(outputs.shape[0]):
                     # Sum dists from each data point to its corresponding cluster
-                    #cluster = clus_indices[i]
-                    #dist[i] = torch.sum((outputs[i] - self.c[:,cluster]) ** 2)
                     dist[i] = torch.sum((centers - outputs[i]) ** 2, dim=1).min()
                 #import pdb; pdb.set_trace()
                 ###
@@ -179,6 +181,8 @@ class DeepSVDDTrainer(BaseTrainer):
 
     def init_center_c(self, train_loader: DataLoader, net: BaseNet, eps=0.1):
         """Initialize hypersphere center c as the mean from an initial forward pass on the data."""
+        logger = logging.getLogger()
+        #TODO incorporate naive Deep SVDD init_c if self.K == 1
         # n_samples = 0
         # c = torch.zeros(net.rep_dim, device=self.device)
 
@@ -196,34 +200,56 @@ class DeepSVDDTrainer(BaseTrainer):
         # cen = c
 
         ### NEW multi-center code - make (kmeans.cluster_centers_).T a tensor and keep adding to each cluster center. Then take average.
-        K = 4 # number of clusters
-        print("Initializing {} clusters".format(K))
-        n_samples = torch.zeros(K, device=self.device)
-        cen = torch.zeros(net.rep_dim, K, device=self.device)
-        self.kmeans = MiniBatchKMeans(n_clusters=K,random_state=0,batch_size=2,max_iter=10)
+        logger.info("Initializing {} clusters".format(self.K))
+        cen = torch.zeros(net.rep_dim, self.K, device=self.device)
+        self.kmeans = KMeans(n_clusters=self.K,random_state=0,max_iter=10)
+        output_data = []
+        label_data = []
         with torch.no_grad():
             # i = 0
             for data in train_loader:
                 # get the inputs of the batch
-                inputs, _, _ = data
+                inputs, labels, _ = data #labels are only for UMAP of hyperspheres
                 inputs = inputs.to(self.device)
                 outputs = net(inputs)
-                if (outputs.shape[0] < K):
-                    break
-                self.kmeans = self.kmeans.partial_fit(outputs)
-                # if (i%20 == 0):
-                #     print(i)
-                #     import pdb; pdb.set_trace()
-                # i += 1
-                cluster_centers = torch.from_numpy(self.kmeans.cluster_centers_.T)
-                cluster_centers = cluster_centers.type(torch.FloatTensor)
-                cluster_centers = cluster_centers.to(self.device)
-                n = outputs.shape[0]//K
-                for k in range(K):
-                    n_samples[k] += n
-                    cen[:,k] += cluster_centers[:,k]
-        
-        cen = torch.div(cen, n_samples)
+                output_data.append(outputs)
+                label_data.append(labels)
+
+            output_data = torch.cat(output_data)
+            self.kmeans = self.kmeans.fit(output_data)
+            cluster_centers = torch.from_numpy(self.kmeans.cluster_centers_.T)
+            cluster_centers = cluster_centers.type(torch.FloatTensor)
+            cen = cluster_centers.to(self.device)
+            dmat = scipy.spatial.distance.squareform(scipy.spatial.distance.pdist(cen.detach().cpu().numpy().T))
+            logger.info(f"Distances between cluster centers: \n{dmat}")
+
+            # Generate silhouette plot
+            # self.silhouette_plot(output_data)
+
+            # UMAP
+            label_data = torch.cat(label_data).numpy()
+            self.latent_UMAP(output_data, label_data, self.kmeans.cluster_centers_)
+            # label_data = torch.cat(label_data).numpy()
+            # # Add hypersphere centers to umap
+            # for i in range(self.K):
+            #     label_data = np.append(label_data,-1)
+            #     output_data = np.append(output_data, np.expand_dims(self.kmeans.cluster_centers_[i],axis=0), axis=0)
+            # reducer = umap.UMAP()
+            # scaled_output = StandardScaler().fit_transform(output_data)
+            # embedding = reducer.fit_transform(scaled_output)
+            # # Plot
+            # # plt.scatter(embedding[label_data==1, 0], embedding[label_data==1, 1], c='y',label='Anomaly')
+            # plt.scatter(embedding[label_data==0, 0], embedding[label_data==0, 1], c='b',label='Normal', s = 10)
+            # plt.scatter(embedding[label_data == -1, 0], embedding[label_data == -1, 1], c='r', label='Center')
+            # plt.legend(loc="upper left")
+            # plt.gca().set_aspect('equal', 'datalim')
+            # plt.grid(False)
+            # plt.title('UMAP projection of the Deep SVDD Latent Space with Centers', fontsize=18)
+            # plt.savefig(f'{self.K}-cluster-umap-scaled.png',bbox_inches='tight')
+            # plt.close()
+
+        import pdb; pdb.set_trace()
+        #cen = torch.div(cen, n_samples)
         ### 
 
         # If c_i is too close to 0, set to +-eps. Reason: a zero unit can be trivially matched with zero weights.
@@ -231,8 +257,51 @@ class DeepSVDDTrainer(BaseTrainer):
         cen[(abs(cen) < eps) & (cen > 0)] = eps
 
         return cen
+    
+    def latent_UMAP(self, latent_data, label_data, centers, anomaly_data: bool = False):
+        """UMAP of latent space and cluster hypersphere centers of Deep SVDD model"""
+        # Add hypersphere centers to umap
+        for i in range(self.K):
+            label_data = np.append(label_data,-1)
+            latent_data = np.append(latent_data, np.expand_dims(centers[i],axis=0), axis=0)
+        reducer = umap.UMAP()
+        scaled_output = StandardScaler().fit_transform(latent_data)
+        embedding = reducer.fit_transform(scaled_output)
+        # Plot
+        if anomaly_data:
+            plt.scatter(embedding[label_data==1, 0], embedding[label_data==1, 1], c='y',label='Anomaly')
+        plt.scatter(embedding[label_data==0, 0], embedding[label_data==0, 1], c='b',label='Normal', s = 10)
+        plt.scatter(embedding[label_data == -1, 0], embedding[label_data == -1, 1], c='r', label='Center')
+        plt.legend(loc="upper left")
+        plt.gca().set_aspect('equal', 'datalim')
+        plt.grid(False)
+        plt.title('UMAP projection of the Deep SVDD Latent Space with Centers', fontsize=18)
+        plt.savefig(f'{self.K}-cluster-umap-scaled.png',bbox_inches='tight')
+        plt.close()
+
+    def silhouette_plot(self, latent_data):
+        """Silhouette Plots and Scores to determine optimal K in KMeans""" 
+        fig, ax = plt.subplots(2, 2, figsize=(15,8))
+        for i in [2, 3, 4, 5]:
+            '''
+            Create KMeans instance for different number of clusters
+            '''
+            km = KMeans(n_clusters=i, max_iter=10, random_state=0)
+            q, mod = divmod(i, 2)
+            '''
+            Create SilhouetteVisualizer instance with KMeans instance
+            Fit the visualizer
+            '''
+            visualizer = SilhouetteVisualizer(km, colors='yellowbrick', ax=ax[q-1][mod])
+            visualizer.fit(latent_data)
+        
+        fig.suptitle('Silhouette Plots for 2, 3, 4, 5 Cluster Centers', fontsize=18)
+        plt.savefig('Silhouette-Visualization.png',bbox_inches='tight')
+        plt.close('all')
 
 
 def get_radius(dist: torch.Tensor, nu: float):
     """Optimally solve for radius R via the (1-nu)-quantile of distances."""
     return np.quantile(np.sqrt(dist.clone().data.cpu().numpy()), 1 - nu)
+
+

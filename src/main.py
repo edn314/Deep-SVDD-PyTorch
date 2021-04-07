@@ -3,6 +3,7 @@ import torch
 import logging
 import random
 import numpy as np
+import os 
 
 from utils.config import Config
 from utils.visualization.plot_images_grid import plot_images_grid
@@ -23,9 +24,12 @@ from datasets.main import load_dataset
               help='Config JSON-file path (default: None).')
 @click.option('--load_model', type=click.Path(exists=True), default=None,
               help='Model file path (default: None).')
+@click.option('--load_ae_model', type=click.Path(exists=True), default=None,
+              help='Pretrained AE model file path (default: None).')
 @click.option('--objective', type=click.Choice(['one-class', 'soft-boundary']), default='one-class',
               help='Specify Deep SVDD objective ("one-class" or "soft-boundary").')
 @click.option('--nu', type=float, default=0.1, help='Deep SVDD hyperparameter nu (must be 0 < nu <= 1).')
+@click.option('--number_clusters', type=int, default=1, help='Deep SVDD number of cluster centers.')
 @click.option('--device', type=str, default='cuda', help='Computation device to use ("cpu", "cuda", "cuda:2", etc.).')
 @click.option('--seed', type=int, default=-1, help='Set seed. If -1, use randomization.')
 @click.option('--optimizer_name', type=click.Choice(['adam', 'amsgrad']), default='adam',
@@ -54,7 +58,7 @@ from datasets.main import load_dataset
               help='Number of workers for data loading. 0 means that the data will be loaded in the main process.')
 @click.option('--normal_class', type=int, default=0,
               help='Specify the normal class of the dataset (all other classes are considered anomalous).')
-def main(dataset_name, net_name, xp_path, data_path, load_config, load_model, objective, nu, device, seed,
+def main(dataset_name, net_name, xp_path, data_path, load_config, load_model, load_ae_model, objective, nu, number_clusters, device, seed,
          optimizer_name, lr, n_epochs, lr_milestone, batch_size, weight_decay, pretrain, ae_optimizer_name, ae_lr,
          ae_n_epochs, ae_lr_milestone, ae_batch_size, ae_weight_decay, n_jobs_dataloader, normal_class):
     """
@@ -97,6 +101,7 @@ def main(dataset_name, net_name, xp_path, data_path, load_config, load_model, ob
     # Print configuration
     logger.info('Deep SVDD objective: %s' % cfg.settings['objective'])
     logger.info('Nu-paramerter: %.2f' % cfg.settings['nu'])
+    logger.info('Number of hyperphere centers: %d' % cfg.settings['number_clusters'])
 
     # Set seed
     if cfg.settings['seed'] != -1:
@@ -115,12 +120,16 @@ def main(dataset_name, net_name, xp_path, data_path, load_config, load_model, ob
     dataset = load_dataset(dataset_name, data_path, normal_class)
 
     # Initialize DeepSVDD model and set neural network \phi
-    deep_SVDD = DeepSVDD(cfg.settings['objective'], cfg.settings['nu'])
+    deep_SVDD = DeepSVDD(cfg.settings['objective'], cfg.settings['nu'], cfg.settings['number_clusters'])
     deep_SVDD.set_network(net_name)
     # If specified, load Deep SVDD model (radius R, center c, network weights, and possibly autoencoder weights)
     if load_model:
         deep_SVDD.load_model(model_path=load_model, load_ae=True)
         logger.info('Loading model from %s.' % load_model)
+    # If specified, load pretrained AE model (autoencoder weights)
+    if load_ae_model:
+        deep_SVDD.load_pretrained_AE_model(model_path=load_ae_model)
+        logger.info('Loading pretrained AE model from %s.' % load_ae_model)
 
     logger.info('Pretraining: %s' % pretrain)
     if pretrain:
@@ -172,6 +181,8 @@ def main(dataset_name, net_name, xp_path, data_path, load_config, load_model, ob
     else:
         deep_SVDD.save_model(export_model=xp_path + '/model.tar', save_ae=False)
     cfg.save_config(export_json=xp_path + '/config.json')
+    # Save cluster centers
+    np.save(os.path.join(xp_path,'centers.npy'),np.asarray(deep_SVDD.c))
     
     # Plot most anomalous and most normal (within-class) test samples
     indices, labels, scores = zip(*deep_SVDD.results['test_scores'])
