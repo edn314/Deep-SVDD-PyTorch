@@ -121,6 +121,7 @@ class DeepSVDD(object):
         self.ae_net.load_state_dict(model_dict['ae_net_dict'])
         self.init_network_weights_from_pretraining()
 
+    #TODO: add 'K': self.K
     def save_model(self, export_model, save_ae=True):
         """Save Deep SVDD model to export_model."""
 
@@ -132,6 +133,7 @@ class DeepSVDD(object):
                     'net_dict': net_dict,
                     'ae_net_dict': ae_net_dict}, export_model)
 
+    # TODO: add self.K = model_dict['K']
     def load_model(self, model_path, load_ae=False):
         """Load Deep SVDD model from model_path."""
 

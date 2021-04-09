@@ -16,6 +16,7 @@ import time
 import torch
 import torch.optim as optim
 import numpy as np
+import pickle
 
 
 class DeepSVDDTrainer(BaseTrainer):
@@ -139,19 +140,27 @@ class DeepSVDDTrainer(BaseTrainer):
         start_time = time.time()
         idx_label_score = []
         net.eval()
+        output_data = []
+        label_data = []
         with torch.no_grad():
             for data in test_loader:
                 inputs, labels, idx = data
                 inputs = inputs.to(self.device)
                 outputs = net(inputs)
+                output_data.append(outputs)
+                label_data.append(labels)
                 # dist = torch.sum((outputs - self.c) ** 2, dim=1)
 
                 ### NEW
-                centers = torch.transpose(self.c,0,1)
-                dist = torch.zeros(outputs.shape[0], device=self.device)
-                for i in range(outputs.shape[0]):
-                    # Sum dists from each data point to its corresponding cluster
-                    dist[i] = torch.sum((centers - outputs[i]) ** 2, dim=1).min()
+                if (self.c.dim() == 1): # naive deep_svdd
+                    centers = self.c
+                    dist = torch.sum((outputs - self.c) ** 2, dim=1)
+                else:
+                    centers = torch.transpose(self.c,0,1)
+                    dist = torch.zeros(outputs.shape[0], device=self.device)
+                    for i in range(outputs.shape[0]):
+                        # Sum dists from each data point to its corresponding cluster
+                        dist[i] = torch.sum((centers - outputs[i]) ** 2, dim=1).min()
                 #import pdb; pdb.set_trace()
                 ###
                 if self.objective == 'soft-boundary':
@@ -177,32 +186,17 @@ class DeepSVDDTrainer(BaseTrainer):
         self.test_auc = roc_auc_score(labels, scores)
         logger.info('Test set AUC: {:.2f}%'.format(100. * self.test_auc))
 
-        logger.info('Finished testing.')
-
-    def init_center_c(self, train_loader: DataLoader, net: BaseNet, eps=0.1):
-        """Initialize hypersphere center c as the mean from an initial forward pass on the data."""
-        logger = logging.getLogger()
-        #TODO incorporate naive Deep SVDD init_c if self.K == 1
-        # n_samples = 0
-        # c = torch.zeros(net.rep_dim, device=self.device)
-
-        net.eval()
-        # with torch.no_grad():
-        #     for data in train_loader:
-        #         # get the inputs of the batch
-        #         inputs, _, _ = data
-        #         inputs = inputs.to(self.device)
-        #         outputs = net(inputs)
-        #         n_samples += outputs.shape[0]
-        #         c += torch.sum(outputs, dim=0)
-
-        # c /= n_samples
-        # cen = c
-
-        ### NEW multi-center code - make (kmeans.cluster_centers_).T a tensor and keep adding to each cluster center. Then take average.
-        logger.info("Initializing {} clusters".format(self.K))
-        cen = torch.zeros(net.rep_dim, self.K, device=self.device)
-        self.kmeans = KMeans(n_clusters=self.K,random_state=0,max_iter=10)
+        #UMAP (same umap model fit in training) - use anomaly_data = True
+        # UMAP Plot (on testing data)
+        kmeans_centers = np.load('centers.npy')
+        output_data = torch.cat(output_data)
+        label_data = torch.cat(label_data).numpy()
+        self.latent_UMAP(output_data, label_data, kmeans_centers, anomaly_data = True)
+        import pdb; pdb.set_trace()
+        # UMAP Plot (on training data)
+        # Get train data loader
+        train_loader, _ = dataset.loaders(batch_size=self.batch_size, num_workers=self.n_jobs_dataloader)
+        
         output_data = []
         label_data = []
         with torch.no_grad():
@@ -214,69 +208,112 @@ class DeepSVDDTrainer(BaseTrainer):
                 outputs = net(inputs)
                 output_data.append(outputs)
                 label_data.append(labels)
+        kmeans_centers = np.load('centers.npy')
+        output_data = torch.cat(output_data)
+        label_data = torch.cat(label_data).numpy()
+        self.latent_UMAP(output_data, label_data, kmeans_centers, anomaly_data = True)
+
+        logger.info('Finished testing.')
+
+    def init_center_c(self, train_loader: DataLoader, net: BaseNet, eps=0.1):
+        """Initialize hypersphere center c as the mean from an initial forward pass on the data."""
+        logger = logging.getLogger()
+        #TODO incorporate naive Deep SVDD init_c if self.K == 1
+        n_samples = 0
+        c = torch.zeros(net.rep_dim, device=self.device)
+
+        net.eval()
+        with torch.no_grad():
+            for data in train_loader:
+                # get the inputs of the batch
+                inputs, _, _ = data
+                inputs = inputs.to(self.device)
+                outputs = net(inputs)
+                n_samples += outputs.shape[0]
+                c += torch.sum(outputs, dim=0)
+
+        c /= n_samples
+        cen = c
+
+        ### NEW multi-center code
+        ###logger.info("Initializing {} clusters".format(self.K))
+        ###cen = torch.zeros(net.rep_dim, self.K, device=self.device)
+        ###kmeans = KMeans(n_clusters=self.K,random_state=0,max_iter=10)
+        output_data = []
+        label_data = []
+        with torch.no_grad():
+            for data in train_loader:
+                # get the inputs of the batch
+                inputs, labels, _ = data #labels are only for UMAP of hyperspheres
+                inputs = inputs.to(self.device)
+                outputs = net(inputs)
+                output_data.append(outputs)
+                label_data.append(labels)
 
             output_data = torch.cat(output_data)
-            self.kmeans = self.kmeans.fit(output_data)
-            cluster_centers = torch.from_numpy(self.kmeans.cluster_centers_.T)
-            cluster_centers = cluster_centers.type(torch.FloatTensor)
-            cen = cluster_centers.to(self.device)
-            dmat = scipy.spatial.distance.squareform(scipy.spatial.distance.pdist(cen.detach().cpu().numpy().T))
-            logger.info(f"Distances between cluster centers: \n{dmat}")
+            ###kmeans = kmeans.fit(output_data)
+            ###cluster_centers = torch.from_numpy(kmeans.cluster_centers_.T)
+            ###cluster_centers = cluster_centers.type(torch.FloatTensor)
+            ###cen = cluster_centers.to(self.device)
+            ###dmat = scipy.spatial.distance.squareform(scipy.spatial.distance.pdist(cen.detach().cpu().numpy().T))
+            ###logger.info(f"Distances between cluster centers: \n{dmat}")
 
             # Generate silhouette plot
-            # self.silhouette_plot(output_data)
+            ## self.silhouette_plot(output_data)
 
-            # UMAP
+            # UMAP Plot
+            ###np.save('centers.npy',kmeans.cluster_centers_)
+            np.save('centers.npy', cen.cpu().detach().numpy())
             label_data = torch.cat(label_data).numpy()
-            self.latent_UMAP(output_data, label_data, self.kmeans.cluster_centers_)
-            # label_data = torch.cat(label_data).numpy()
-            # # Add hypersphere centers to umap
-            # for i in range(self.K):
-            #     label_data = np.append(label_data,-1)
-            #     output_data = np.append(output_data, np.expand_dims(self.kmeans.cluster_centers_[i],axis=0), axis=0)
-            # reducer = umap.UMAP()
-            # scaled_output = StandardScaler().fit_transform(output_data)
-            # embedding = reducer.fit_transform(scaled_output)
-            # # Plot
-            # # plt.scatter(embedding[label_data==1, 0], embedding[label_data==1, 1], c='y',label='Anomaly')
-            # plt.scatter(embedding[label_data==0, 0], embedding[label_data==0, 1], c='b',label='Normal', s = 10)
-            # plt.scatter(embedding[label_data == -1, 0], embedding[label_data == -1, 1], c='r', label='Center')
-            # plt.legend(loc="upper left")
-            # plt.gca().set_aspect('equal', 'datalim')
-            # plt.grid(False)
-            # plt.title('UMAP projection of the Deep SVDD Latent Space with Centers', fontsize=18)
-            # plt.savefig(f'{self.K}-cluster-umap-scaled.png',bbox_inches='tight')
-            # plt.close()
-
-        import pdb; pdb.set_trace()
-        #cen = torch.div(cen, n_samples)
+            ###self.latent_UMAP(output_data, label_data, kmeans.cluster_centers_)
+            self.latent_UMAP(output_data, label_data, cen.cpu().detach().numpy())
         ### 
-
+        import pdb; pdb.set_trace()
         # If c_i is too close to 0, set to +-eps. Reason: a zero unit can be trivially matched with zero weights.
         cen[(abs(cen) < eps) & (cen < 0)] = -eps
         cen[(abs(cen) < eps) & (cen > 0)] = eps
 
         return cen
-    
+    # TODO: save UMAP object in correct file path
     def latent_UMAP(self, latent_data, label_data, centers, anomaly_data: bool = False):
-        """UMAP of latent space and cluster hypersphere centers of Deep SVDD model"""
+        """UMAP of latent space and cluster hypersphere centers of Deep SVDD model
+        
+        :arg ANOMALY_DATA: set to True in testing, when data contains an anomaly class
+        """
+
         # Add hypersphere centers to umap
         for i in range(self.K):
             label_data = np.append(label_data,-1)
-            latent_data = np.append(latent_data, np.expand_dims(centers[i],axis=0), axis=0)
+            if (self.K == 1):
+                latent_data = np.append(latent_data, np.expand_dims(centers,axis=0), axis=0)
+            else:
+                latent_data = np.append(latent_data, np.expand_dims(centers[i],axis=0), axis=0)
         reducer = umap.UMAP()
-        scaled_output = StandardScaler().fit_transform(latent_data)
-        embedding = reducer.fit_transform(scaled_output)
+        scaled_output = StandardScaler().fit_transform(latent_data) 
+        # SAVE trans object for each K model. Need to fit only and save learned projection embedding
+        if not anomaly_data: # train time
+            trans = reducer.fit(scaled_output)
+            pickle.dump(trans, open(f'{self.K}-cluster-umap-model.sav', 'wb'))
+            embedding = trans.embedding_
+        else: # test time
+            trans = pickle.load(open(f'{self.K}-cluster-umap-model.sav', 'rb'))
+            trans = trans.transform(scaled_output) # reduced representation
+            embedding = trans
+        #embedding = reducer.fit_transform(scaled_output) # before saved umap embedding for test
         # Plot
         if anomaly_data:
-            plt.scatter(embedding[label_data==1, 0], embedding[label_data==1, 1], c='y',label='Anomaly')
+            plt.scatter(embedding[label_data==1, 0], embedding[label_data==1, 1], c='y',label='Anomaly', s = 10)
         plt.scatter(embedding[label_data==0, 0], embedding[label_data==0, 1], c='b',label='Normal', s = 10)
         plt.scatter(embedding[label_data == -1, 0], embedding[label_data == -1, 1], c='r', label='Center')
         plt.legend(loc="upper left")
         plt.gca().set_aspect('equal', 'datalim')
         plt.grid(False)
-        plt.title('UMAP projection of the Deep SVDD Latent Space with Centers', fontsize=18)
-        plt.savefig(f'{self.K}-cluster-umap-scaled.png',bbox_inches='tight')
+        if not anomaly_data: # train time
+            plt.title('UMAP projection of the Deep SVDD Latent Space (Pre-trained AE)', fontsize=18)
+            plt.savefig(f'{self.K}-cluster-umap-scaled-pretrained-ae.png',bbox_inches='tight')
+        else: # test time
+            plt.title('UMAP projection of the Deep SVDD Latent Space (Trained Model)', fontsize=18)
+            plt.savefig(f'{self.K}-cluster-umap-scaled-trained-model.png',bbox_inches='tight')
         plt.close()
 
     def silhouette_plot(self, latent_data):
