@@ -25,8 +25,10 @@ class DeepSVDD(object):
         results: A dictionary to save the results.
     """
 
-    def __init__(self, objective: str = 'one-class', nu: float = 0.1, K: int = 1):
+    def __init__(self, xp_path: str, objective: str = 'one-class', nu: float = 0.1, K: int = 1):
         """Inits DeepSVDD with one of the two objectives and hyperparameter nu."""
+
+        self.xp_path = xp_path # output path
 
         assert objective in ('one-class', 'soft-boundary'), "Objective must be either 'one-class' or 'soft-boundary'."
         self.objective = objective
@@ -64,7 +66,7 @@ class DeepSVDD(object):
         """Trains the Deep SVDD model on the training data."""
 
         self.optimizer_name = optimizer_name
-        self.trainer = DeepSVDDTrainer(self.objective, self.R, self.c, self.nu, self.K, optimizer_name, lr=lr,
+        self.trainer = DeepSVDDTrainer(self.xp_path, self.objective, self.R, self.c, self.nu, self.K, optimizer_name, lr=lr,
                                        n_epochs=n_epochs, lr_milestones=lr_milestones, batch_size=batch_size,
                                        weight_decay=weight_decay, device=device, n_jobs_dataloader=n_jobs_dataloader)
         # Get the model
@@ -77,7 +79,7 @@ class DeepSVDD(object):
         """Tests the Deep SVDD model on the test data."""
 
         if self.trainer is None:
-            self.trainer = DeepSVDDTrainer(self.objective, self.R, self.c, self.nu, self.K,
+            self.trainer = DeepSVDDTrainer(self.xp_path, self.objective, self.R, self.c, self.nu, self.K,
                                            device=device, n_jobs_dataloader=n_jobs_dataloader)
 
         self.trainer.test(dataset, self.net)
