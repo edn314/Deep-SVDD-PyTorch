@@ -15,7 +15,8 @@ class CyCIF_Dataset(TorchvisionDataset):
         self.n_classes = 2  # 0: normal, 1: outlier
 
         self.train_set = MyCyCIF(root=root,split="train")
-        self.test_set = MyCyCIF(root=root,split="val")
+        self.val_set = MyCyCIF(root=root,split="val")
+        self.test_set = MyCyCIF(root=root,split="test")
 
 class MyCyCIF(data.Dataset):
     def __init__(self,root,split="train"):

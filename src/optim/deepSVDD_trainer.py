@@ -11,6 +11,7 @@ from sklearn.preprocessing import StandardScaler
 import umap
 from yellowbrick.cluster import SilhouetteVisualizer
 import os
+from .early_stop import EarlyStopping
 
 import logging
 import time
@@ -55,7 +56,7 @@ class DeepSVDDTrainer(BaseTrainer):
         net = net.to(self.device)
 
         # Get train data loader
-        train_loader, _ = dataset.loaders(batch_size=self.batch_size, num_workers=self.n_jobs_dataloader)
+        train_loader, _, _ = dataset.loaders(batch_size=self.batch_size, num_workers=self.n_jobs_dataloader)
 
         # Set optimizer (Adam optimizer for now)
         optimizer = optim.Adam(net.parameters(), lr=self.lr, weight_decay=self.weight_decay,
@@ -63,7 +64,7 @@ class DeepSVDDTrainer(BaseTrainer):
 
         # Set learning rate scheduler
         scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=self.lr_milestones, gamma=0.1)
-        
+        # scheduler = optim.lr_scheduler.ExponentialLR(optimizer, gamma = 0.9)
         # Initialize hypersphere center c (if c not loaded)
         if self.c is None:
             logger.info('Initializing center c...')
@@ -73,6 +74,7 @@ class DeepSVDDTrainer(BaseTrainer):
         # Training
         logger.info('Starting training...')
         start_time = time.time()
+        es = EarlyStopping(patience=10)
         net.train()
         for epoch in range(self.n_epochs):
 
@@ -92,7 +94,7 @@ class DeepSVDDTrainer(BaseTrainer):
 
                 # Update network parameters via backpropagation: forward + backward + optimize
                 outputs = net(inputs)
-
+                
                 ### NEW - get closest cluster center, take dist, sum/mean for loss
                 if (self.c.dim() == 1): # naive deep_svdd
                     centers = self.c
@@ -102,8 +104,11 @@ class DeepSVDDTrainer(BaseTrainer):
                     dist = torch.zeros(outputs.shape[0], device=self.device)
                     for i in range(outputs.shape[0]):
                         # Sum dists from each data point to its corresponding cluster
-                        dist[i] = torch.sum((centers - outputs[i]) ** 2, dim=1).min()
-                ###
+                        # dist[i] = torch.sum((centers - outputs[i]) ** 2, dim=1).min()
+                        ### Avoid gradient of min
+                        cluster_idx = torch.sum((centers - outputs[i]) ** 2, dim=1).argmin()
+                        dist[i] = torch.sum((centers[cluster_idx] - outputs[i]) ** 2, dim=0)
+                ### 
                 if self.objective == 'soft-boundary':
                     scores = dist - self.R ** 2
                     loss = self.R ** 2 + (1 / self.nu) * torch.mean(torch.max(torch.zeros_like(scores), scores))
@@ -118,35 +123,93 @@ class DeepSVDDTrainer(BaseTrainer):
 
                 loss_epoch += loss.item()
                 n_batches += 1
+            
+            # ### DEBUG UMAPs and CENTERS (ADDED EPOCH NUMBER TO LATENT UMAP FUNCTION ###
+            # train_loader, _, _ = dataset.loaders(batch_size=self.batch_size, num_workers=self.n_jobs_dataloader)
+            
+            # output_data = []
+            # label_data = []
+            # with torch.no_grad():
+            #     for data in train_loader:
+            #         # get the inputs of the batch
+            #         inputs, labels, _ = data #labels are only for UMAP of hyperspheres
+            #         inputs = inputs.to(self.device)
+            #         outputs = net(inputs)
+            #         output_data.append(outputs)
+            #         label_data.append(labels)
+            # kmeans_centers = np.load(os.path.join(self.xp_path,'centers.npy'))
+            # output_data = torch.cat(output_data)
+            # label_data = torch.cat(label_data).numpy()
+            # self.latent_UMAP(epoch, output_data, label_data, kmeans_centers, pretrain_ae = False) ### USE pretrain_ae = False, no repeat
+            # ############
 
             # log epoch statistics
             epoch_train_time = time.time() - epoch_start_time
             logger.info('  Epoch {}/{}\t Time: {:.3f}\t Loss: {:.8f}'
                         .format(epoch + 1, self.n_epochs, epoch_train_time, loss_epoch / n_batches))
 
+            # Validation and Early Stopping
+            _, val_loader, _ = dataset.loaders(batch_size=self.batch_size, num_workers=self.n_jobs_dataloader)
+            if val_loader.dataset is None:
+                logger.info('Validation data not available...')
+                pass
+            else:
+                net.eval()
+                with torch.no_grad():
+                    loss_val = 0.0
+                    n_batches = 0
+                    for data in val_loader:
+                        inputs, _, _ = data
+                        inputs = inputs.to(self.device)
+                        outputs = net(inputs)
+                        if (self.c.dim() == 1): # naive deep_svdd
+                            centers = self.c
+                            dist = torch.sum((outputs - self.c) ** 2, dim=1)
+                        else:
+                            centers = torch.transpose(self.c,0,1)
+                            dist = torch.zeros(outputs.shape[0], device=self.device)
+                            for i in range(outputs.shape[0]):
+                                # Sum dists from each data point to its corresponding cluster
+                                # dist[i] = torch.sum((centers - outputs[i]) ** 2, dim=1).min()
+                                ### Avoid gradient of min
+                                cluster_idx = torch.sum((centers - outputs[i]) ** 2, dim=1).argmin()
+                                dist[i] = torch.sum((centers[cluster_idx] - outputs[i]) ** 2, dim=0)
+                        if self.objective == 'soft-boundary':
+                            scores = dist - self.R ** 2
+                            loss = self.R ** 2 + (1 / self.nu) * torch.mean(torch.max(torch.zeros_like(scores), scores))
+                        else:
+                            loss = torch.mean(dist)
+                        
+                        loss_val += loss.item()
+                        n_batches += 1
+                logger.info('  Validation Loss: {:.8f}'.format(loss_val / n_batches))
+                if es.step( torch.tensor(loss_val / n_batches) ):
+                    logger.info('  Stop early at epoch {}/{}'.format(epoch + 1, self.n_epochs))
+                    break
+
         self.train_time = time.time() - start_time
         logger.info('Training time: %.3f' % self.train_time)
 
         logger.info('Finished training.')
 
-        # UMAP Plot (on training data)
-        # Get train data loader
-        train_loader, _ = dataset.loaders(batch_size=self.batch_size, num_workers=self.n_jobs_dataloader)
+        # # UMAP Plot (on training data)
+        # # Get train data loader
+        # train_loader, _, _ = dataset.loaders(batch_size=self.batch_size, num_workers=self.n_jobs_dataloader)
         
-        output_data = []
-        label_data = []
-        with torch.no_grad():
-            for data in train_loader:
-                # get the inputs of the batch
-                inputs, labels, _ = data #labels are only for UMAP of hyperspheres
-                inputs = inputs.to(self.device)
-                outputs = net(inputs)
-                output_data.append(outputs)
-                label_data.append(labels)
-        kmeans_centers = np.load(os.path.join(self.xp_path,'centers.npy'))
-        output_data = torch.cat(output_data)
-        label_data = torch.cat(label_data).numpy()
-        self.latent_UMAP(output_data, label_data, kmeans_centers, pretrain_ae = False)
+        # output_data = []
+        # label_data = []
+        # with torch.no_grad():
+        #     for data in train_loader:
+        #         # get the inputs of the batch
+        #         inputs, labels, _ = data #labels are only for UMAP of hyperspheres
+        #         inputs = inputs.to(self.device)
+        #         outputs = net(inputs)
+        #         output_data.append(outputs)
+        #         label_data.append(labels)
+        # kmeans_centers = np.load(os.path.join(self.xp_path,'centers.npy'))
+        # output_data = torch.cat(output_data)
+        # label_data = torch.cat(label_data).numpy()
+        # self.latent_UMAP(output_data, label_data, kmeans_centers, pretrain_ae = False) ### USE pretrain_ae = False, no repeat
 
         return net
 
@@ -157,7 +220,7 @@ class DeepSVDDTrainer(BaseTrainer):
         net = net.to(self.device)
 
         # Get test data loader
-        _, test_loader = dataset.loaders(batch_size=self.batch_size, num_workers=self.n_jobs_dataloader)
+        _, _, test_loader = dataset.loaders(batch_size=self.batch_size, num_workers=self.n_jobs_dataloader)
 
         # Testing
         logger.info('Starting testing...')
@@ -183,7 +246,10 @@ class DeepSVDDTrainer(BaseTrainer):
                     dist = torch.zeros(outputs.shape[0], device=self.device)
                     for i in range(outputs.shape[0]):
                         # Sum dists from each data point to its corresponding cluster
-                        dist[i] = torch.sum((centers - outputs[i]) ** 2, dim=1).min()
+                        # dist[i] = torch.sum((centers - outputs[i]) ** 2, dim=1).min()
+                        ### Avoid gradient of min
+                        cluster_idx = torch.sum((centers - outputs[i]) ** 2, dim=1).argmin()
+                        dist[i] = torch.sum((centers[cluster_idx] - outputs[i]) ** 2, dim=0)
                 ###
                 if self.objective == 'soft-boundary':
                     scores = dist - self.R ** 2
@@ -208,12 +274,12 @@ class DeepSVDDTrainer(BaseTrainer):
         self.test_auc = roc_auc_score(labels, scores)
         logger.info('Test set AUC: {:.2f}%'.format(100. * self.test_auc))
 
-        #UMAP (same umap model fit in training) - use anomaly_data = True
-        # Plot with testing data
-        kmeans_centers = np.load(os.path.join(self.xp_path,'centers.npy'))
-        output_data = torch.cat(output_data)
-        label_data = torch.cat(label_data).numpy()
-        self.latent_UMAP(output_data, label_data, kmeans_centers, pretrain_ae = False, anomaly_data = True)
+        # #UMAP (same umap model fit in training) - use anomaly_data = True
+        # # Plot with testing data
+        # kmeans_centers = np.load(os.path.join(self.xp_path,'centers.npy'))
+        # output_data = torch.cat(output_data)
+        # label_data = torch.cat(label_data).numpy()
+        # self.latent_UMAP(output_data, label_data, kmeans_centers, pretrain_ae = True, anomaly_data = True) ### USE pretrain_ae = False
 
         logger.info('Finished testing.')
 
@@ -275,7 +341,7 @@ class DeepSVDDTrainer(BaseTrainer):
 
         return cen
     
-    def latent_UMAP(self, latent_data, label_data, centers, pretrain_ae: bool = True, anomaly_data: bool = False):
+    def latent_UMAP(self, latent_data, label_data, centers, pretrain_ae: bool = True, anomaly_data: bool = False, repeat: bool = False, epoch = -1):
         """UMAP of latent space and cluster hypersphere centers of Deep SVDD model
         
         :arg ANOMALY_DATA: set to True in testing, when data contains an anomaly class
@@ -289,6 +355,7 @@ class DeepSVDDTrainer(BaseTrainer):
             else: ### multi-center code
                 latent_data = np.append(latent_data, np.expand_dims(centers[i],axis=0), axis=0)
         reducer = umap.UMAP()
+        
         # save *trans* object for each K model. Need to fit only and save learned projection embedding
         if pretrain_ae: # embedding for pretrained AE
             trans = reducer.fit(latent_data)
@@ -306,13 +373,17 @@ class DeepSVDDTrainer(BaseTrainer):
         plt.legend(loc="upper left")
         plt.gca().set_aspect('equal', 'datalim')
         plt.grid(False)
-        if pretrain_ae and not anomaly_data: # embedding for pretrained AE
+        ### if pretrain_ae and not anomaly_data: # embedding for pretrained AE
+        if pretrain_ae and not anomaly_data and not repeat:
             plt.title('UMAP projection of the Deep SVDD Latent Space (Pre-trained AE)', fontsize=18)
             plt.savefig(os.path.join(self.xp_path,f'{self.K}-cluster-umap-scaled-pretrained-ae.png'),bbox_inches='tight')
-        elif not pretrain_ae and not anomaly_data: # embedding for trained deep SVDD
+        ### elif not pretrain_ae and not anomaly_data: # embedding for trained deep SVDD
+        ### elif pretrain_ae and not anomaly_data and repeat:
+        elif not pretrain_ae and not anomaly_data and not repeat:
             plt.title('UMAP projection of the Deep SVDD Latent Space (Trained Model)', fontsize=18)
-            plt.savefig(os.path.join(self.xp_path,f'{self.K}-cluster-umap-scaled-trained-model.png'),bbox_inches='tight')
-        elif not pretrain_ae and anomaly_data: # embedding for trained deep SVDD on test data
+            plt.savefig(os.path.join(self.xp_path,f'{self.K}-cluster-umap-scaled-trained-model-epoch-{epoch}.png'),bbox_inches='tight')
+        ### elif not pretrain_ae and anomaly_data: # embedding for trained deep SVDD on test data
+        elif pretrain_ae and anomaly_data:
             plt.title('UMAP projection of Deep SVDD Trained Model on Test Data', fontsize=18)
             plt.savefig(os.path.join(self.xp_path,f'{self.K}-cluster-umap-scaled-trained-model-test-data.png'),bbox_inches='tight')
         else:      

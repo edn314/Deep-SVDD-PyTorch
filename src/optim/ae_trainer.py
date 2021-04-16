@@ -24,15 +24,16 @@ class AETrainer(BaseTrainer):
         ae_net = ae_net.to(self.device)
 
         # Get train data loader
-        train_loader, _ = dataset.loaders(batch_size=self.batch_size, num_workers=self.n_jobs_dataloader)
+        train_loader, _, _ = dataset.loaders(batch_size=self.batch_size, num_workers=self.n_jobs_dataloader)
 
         # Set optimizer (Adam optimizer for now)
         optimizer = optim.Adam(ae_net.parameters(), lr=self.lr, weight_decay=self.weight_decay,
                                amsgrad=self.optimizer_name == 'amsgrad')
 
         # Set learning rate scheduler
-        scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=self.lr_milestones, gamma=0.1)
-
+        # scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=self.lr_milestones, gamma=0.1)
+        scheduler = optim.lr_scheduler.ExponentialLR(optimizer, gamma = 0.9)
+        
         # Training
         logger.info('Starting pretraining...')
         start_time = time.time()
@@ -81,7 +82,7 @@ class AETrainer(BaseTrainer):
         ae_net = ae_net.to(self.device)
 
         # Get test data loader
-        _, test_loader = dataset.loaders(batch_size=self.batch_size, num_workers=self.n_jobs_dataloader)
+        _, _, test_loader = dataset.loaders(batch_size=self.batch_size, num_workers=self.n_jobs_dataloader)
 
         # Testing
         logger.info('Testing autoencoder...')

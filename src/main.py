@@ -214,6 +214,7 @@ def main(dataset_name, net_name, xp_path, data_path, load_config, load_model, lo
             for i in range(32):
                 idx = idx_sorted_all[i]   
                 X = dataset.test_set[idx][0].unsqueeze(1)
+                import pdb; pdb.set_trace()
                 # From test images, extract the ones model predicts as normal with highest confidence (better)
                 plot_images_labels(X, label = labels_sorted_all[i], export_img=xp_path + '/images/simple_img_'+str(i), title='Simplest Example: Score = {:4.2f}'.format(scores_sorted_all[i]), padding=2)
 
