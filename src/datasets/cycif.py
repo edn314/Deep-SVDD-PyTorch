@@ -77,7 +77,6 @@ class MyCyCIF(data.Dataset):
                 
                 label = cv2.resize(label_crop,(label_crop.shape[0]*4,label_crop.shape[1]*4)) # upsample to 256 x 256
                 
-                # import pdb; pdb.set_trace()
                 # import torchvision
                 # torchvision.utils.save_image(torch.unsqueeze(torch.from_numpy(label),dim=0),
                 #                 "./label_test2.png",
@@ -91,7 +90,7 @@ class MyCyCIF(data.Dataset):
                 torch_label = torch.from_numpy(label)
                 torch_label = torch.unsqueeze(torch_label,dim=0) 
    
-            return torch_image, binary_label, index
+            return torch_image.repeat(3,1,1), binary_label, index
         
         # Train mode
         else:
@@ -106,7 +105,7 @@ class MyCyCIF(data.Dataset):
             torch_image = torch_image.type(torch.FloatTensor)
             binary_label = 0 # training set contains only clean images
 
-            return torch_image, binary_label, index
+            return torch_image.repeat(3,1,1), binary_label, index
 
     def normalize_images(self,images): #,train):
             # Resize Operation
