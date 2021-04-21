@@ -105,6 +105,10 @@ nvidia-smi -L
 #python main.py cycif cycif_ResNet ../log/resnet-end-to-end-kmeans-static-centers-patience-25/patience-5/k-5 /n/pfister_lab2/Lab/enovikov/data/Artifact-CyCIF-Data-2021/Sardana-Annotations/Edward/train/data/ --number_clusters 5 --objective one-class --lr 0.0001 --n_epochs 500 --lr_milestone 50 --batch_size 16 --weight_decay 0.5e-6 --pretrain False --load_ae_model /n/pfister_lab2/Lab/enovikov/unsup-ano-detection/anomaly-project/Deep-SVDD-PyTorch/log/resnet-end-to-end-kmeans-static-centers-patience-25/k-1/model.tar --ae_lr 0.0001 --ae_n_epochs 250 --ae_lr_milestone 50 --ae_batch_size 16 --ae_weight_decay 5e-3;
 #python main.py cycif cycif_ResNet ../log/resnet-end-to-end-kmeans-static-centers-patience-25/patience-5/k-2 /n/pfister_lab2/Lab/enovikov/data/Artifact-CyCIF-Data-2021/Sardana-Annotations/Edward/train/data/ --number_clusters 2 --objective one-class --lr 0.0001 --n_epochs 500 --lr_milestone 50 --batch_size 16 --weight_decay 0.5e-6 --pretrain False --load_ae_model /n/pfister_lab2/Lab/enovikov/unsup-ano-detection/anomaly-project/Deep-SVDD-PyTorch/log/resnet-end-to-end-kmeans-static-centers-patience-25/k-1/model.tar --ae_lr 0.0001 --ae_n_epochs 250 --ae_lr_milestone 50 --ae_batch_size 16 --ae_weight_decay 5e-3;
 
+# OFFICIAL EXPERIMENTS #
+### KMeans with ResNet50 backbone (for transfer learning) - patience = 10, static centers ### 
+# make new shell script - pass run, k- folder, and num_clusters arg (1) do for k-1 runs and then for (2) k>1 runs
+python main.py cycif cycif_ResNet ../log/resnet-static-centers-patience-10/"$1"/"k-$2" /n/pfister_lab2/Lab/enovikov/data/Artifact-CyCIF-Data-2021/Sardana-Annotations/Edward/train/data/ --number_clusters "$2" --objective one-class --lr 0.0001 --n_epochs 300 --lr_milestone 50 --batch_size 16 --weight_decay 0.5e-6 --pretrain True --ae_lr 0.0001 --ae_n_epochs 150 --ae_lr_milestone 50 --ae_batch_size 16 --ae_weight_decay 5e-3;
 
 # Example Test Run:
 #python main.py cycif cycif_Net ../log/cycif-run-test1 /n/pfister_lab2/Lab/enovikov/data/Artifact-CyCIF-Data-2021/Sardana-Annotations/Edward/train/data/ --load_config /n/pfister_lab2/Lab/enovikov/unsup-ano-detection/anomaly-project/Deep-SVDD-PyTorch/log/cycif-run11-multi-center-k-2-full-kmeans/config.json --load_model /n/pfister_lab2/Lab/enovikov/unsup-ano-detection/anomaly-project/Deep-SVDD-PyTorch/log/cycif-run11-multi-center-k-2-full-kmeans/model.tar --objective one-class --lr 0.0001 --lr_milestone 50 --batch_size 16 --weight_decay 0.5e-6 --pretrain False
@@ -127,3 +131,4 @@ nvidia-smi -L
 
 # TEST ResNet
 #python main.py cycif cycif_ResNet ../log/cycif-run-test1 /n/pfister_lab2/Lab/enovikov/data/Artifact-CyCIF-Data-2021/Sardana-Annotations/Edward/train/data/ --objective one-class --lr 0.0001 --n_epochs 500 --lr_milestone 50 --batch_size 16 --weight_decay 0.5e-6 --pretrain True --ae_lr 0.0001 --ae_n_epochs 5 --ae_lr_milestone 50 --ae_batch_size 16 --ae_weight_decay 5e-3;
+

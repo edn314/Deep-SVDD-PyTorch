@@ -8,6 +8,7 @@ import os
 from utils.config import Config
 from utils.visualization.plot_images_grid import plot_images_grid
 from utils.visualization.plot_images_labels import plot_images_labels
+from utils.visualization.make_image_gallery import concat_images
 from deepSVDD import DeepSVDD
 from datasets.main import load_dataset
 
@@ -206,27 +207,47 @@ def main(dataset_name, net_name, xp_path, data_path, load_config, load_model, lo
             plot_images_grid(X_outliers, export_img=xp_path + '/outliers', title='Most anomalous examples', padding=2)
 
         if dataset_name == 'cycif':
+            # # Lowest to highest uncertainty scores
+            # idx_sorted_all = indices[np.argsort(scores)]
+            # labels_sorted_all = labels[np.argsort(scores)]
+            # scores_sorted_all = np.sort(scores)
+
+            # for i in range(32):
+            #     idx = idx_sorted_all[i]   
+            #     X = dataset.test_set[idx][0].unsqueeze(1)
+            #     # From test images, extract the ones model predicts as normal with highest confidence (better)
+            #     plot_images_labels(X, label = labels_sorted_all[i], export_img=xp_path + '/images/simple_img_'+str(i), title='Simplest Example: Score = {:4.2f}'.format(scores_sorted_all[i]), padding=2)
+
+            # # Highest to lowest uncertainty scores
+            # idx_sorted_all = np.flip(idx_sorted_all)
+            # labels_sorted_all = np.flip(labels_sorted_all)
+            # scores_sorted_all = np.flip(scores_sorted_all)
+
+            # for i in range(32):
+            #     idx = idx_sorted_all[i]
+            #     X = dataset.test_set[idx][0].unsqueeze(1)
+            #     # From test images, extract the ones model predicts as normal with lowest confidence (worse)
+            #     plot_images_labels(X, label = labels_sorted_all[i], export_img=xp_path + '/images/difficult_img_'+str(i), title='Difficult Example: Score = {:4.2f}'.format(scores_sorted_all[i]), padding=2)
+
             # Lowest to highest uncertainty scores
             idx_sorted_all = indices[np.argsort(scores)]
             labels_sorted_all = labels[np.argsort(scores)]
             scores_sorted_all = np.sort(scores)
-
-            for i in range(32):
+            for i in range(128):
                 idx = idx_sorted_all[i]   
                 X = dataset.test_set[idx][0].unsqueeze(1)
-                # From test images, extract the ones model predicts as normal with highest confidence (better)
-                plot_images_labels(X, label = labels_sorted_all[i], export_img=xp_path + '/images/simple_img_'+str(i), title='Simplest Example: Score = {:4.2f}'.format(scores_sorted_all[i]), padding=2)
+                plot_images_labels(X, label = labels_sorted_all[i], export_img=xp_path + '/images/img_'+str(i), title='Score = {:4.2f}'.format(scores_sorted_all[i]), padding=2)
+            # Assemble Gallery
+            folder = xp_path + '/images'
+            image_paths = [os.path.join(folder, f) 
+                        for f in os.listdir(folder) if f.endswith('.png')]
 
-            # Highest to lowest uncertainty scores
-            idx_sorted_all = np.flip(idx_sorted_all)
-            labels_sorted_all = np.flip(labels_sorted_all)
-            scores_sorted_all = np.flip(scores_sorted_all)
+            # Random selection of images
+            image_array = random.sample(image_paths, k=128)
 
-            for i in range(32):
-                idx = idx_sorted_all[i]
-                X = dataset.test_set[idx][0].unsqueeze(1)
-                # From test images, extract the ones model predicts as normal with lowest confidence (worse)
-                plot_images_labels(X, label = labels_sorted_all[i], export_img=xp_path + '/images/difficult_img_'+str(i), title='Difficult Example: Score = {:4.2f}'.format(scores_sorted_all[i]), padding=2)
+            # Create and save image grid
+            image = concat_images(image_array, (100, 100), (16, 8))
+            image.save(os.path.join(folder,'gallery_128.png'), 'PNG')
 
 
 if __name__ == '__main__':

@@ -3,6 +3,7 @@ from base.base_dataset import BaseADDataset
 from base.base_net import BaseNet
 from torch.utils.data.dataloader import DataLoader
 from sklearn.metrics import roc_auc_score
+from sklearn.metrics import roc_curve
 from sklearn.cluster import MiniBatchKMeans
 from sklearn.cluster import KMeans
 import scipy
@@ -129,24 +130,24 @@ class DeepSVDDTrainer(BaseTrainer):
                 loss_epoch += loss.item()
                 n_batches += 1
             
-            # ### DEBUG UMAPs and CENTERS (ADDED EPOCH NUMBER TO LATENT UMAP FUNCTION ###
-            # train_loader, _, _ = dataset.loaders(batch_size=self.batch_size, num_workers=self.n_jobs_dataloader)
+            # # ### DEBUG UMAPs and CENTERS (ADDED EPOCH NUMBER TO LATENT UMAP FUNCTION ###
+            # # train_loader, _, _ = dataset.loaders(batch_size=self.batch_size, num_workers=self.n_jobs_dataloader)
             
-            output_data = []
-            label_data = []
-            with torch.no_grad():
-                for data in train_loader:
-                    # get the inputs of the batch
-                    inputs, labels, _ = data #labels are only for UMAP of hyperspheres
-                    inputs = inputs.to(self.device)
-                    outputs = net(inputs)
-                    output_data.append(outputs)
-                    label_data.append(labels)
-            kmeans_centers = np.load(os.path.join(self.xp_path,'centers.npy'))
-            output_data = torch.cat(output_data)
-            label_data = torch.cat(label_data).numpy()
-            self.latent_UMAP(output_data, label_data, kmeans_centers, pretrain_ae = False, epoch = epoch) ### USE pretrain_ae = False, no repeat
-            ############
+            # output_data = []
+            # label_data = []
+            # with torch.no_grad():
+            #     for data in train_loader:
+            #         # get the inputs of the batch
+            #         inputs, labels, _ = data #labels are only for UMAP of hyperspheres
+            #         inputs = inputs.to(self.device)
+            #         outputs = net(inputs)
+            #         output_data.append(outputs)
+            #         label_data.append(labels)
+            # kmeans_centers = np.load(os.path.join(self.xp_path,'centers.npy'))
+            # output_data = torch.cat(output_data)
+            # label_data = torch.cat(label_data).numpy()
+            # self.latent_UMAP(output_data, label_data, kmeans_centers, pretrain_ae = False, epoch = epoch) ### USE pretrain_ae = False, no repeat
+            # ############
 
             # log epoch statistics
             epoch_train_time = time.time() - epoch_start_time
@@ -281,6 +282,19 @@ class DeepSVDDTrainer(BaseTrainer):
 
         self.test_auc = roc_auc_score(labels, scores)
         logger.info('Test set AUC: {:.2f}%'.format(100. * self.test_auc))
+
+        # ROC Curve
+        fpr, tpr, _ = roc_curve(labels,scores)
+        plt.title('Receiver Operating Characteristic for {} cluster(s)'.format(self.K))
+        plt.plot(fpr, tpr, 'b', label = 'AUC = %0.2f' % self.test_auc)
+        plt.legend(loc = 'lower right')
+        plt.plot([0, 1], [0, 1],'r--')
+        plt.xlim([0, 1])
+        plt.ylim([0, 1])
+        plt.ylabel('True Positive Rate')
+        plt.xlabel('False Positive Rate')
+        plt.grid(False)
+        plt.savefig(os.path.join(self.xp_path,f'{self.K}-cluster-roc-curve.png'),bbox_inches='tight')
 
         #UMAP (same umap model fit in training) - use anomaly_data = True
         # Plot with testing data
