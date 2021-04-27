@@ -342,10 +342,10 @@ class DeepSVDDTrainer(BaseTrainer):
 
         #UMAP (same umap model fit in training) - use anomaly_data = True
         # Plot with testing data
-        # kmeans_centers = np.load(os.path.join(self.xp_path,'centers.npy'))
-        # output_data = torch.cat(output_data)
-        # label_data = torch.cat(label_data).numpy()
-        # self.latent_UMAP(output_data, label_data, kmeans_centers, pretrain_ae = True, anomaly_data = True) ### USE pretrain_ae = False
+        kmeans_centers = np.load(os.path.join(self.xp_path,'centers.npy'))
+        output_data = torch.cat(output_data)
+        label_data = torch.cat(label_data).numpy()
+        self.latent_UMAP(output_data, label_data, kmeans_centers, pretrain_ae = True, anomaly_data = True) ### USE pretrain_ae = False
 
         logger.info('Finished testing.')
 
