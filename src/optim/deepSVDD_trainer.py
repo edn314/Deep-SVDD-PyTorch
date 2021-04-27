@@ -13,6 +13,7 @@ import umap
 from yellowbrick.cluster import SilhouetteVisualizer
 import os
 from .early_stop import EarlyStopping
+from loss.losses import TripletLoss
 
 import logging
 import time
@@ -50,6 +51,8 @@ class DeepSVDDTrainer(BaseTrainer):
         self.test_time = None
         self.test_scores = None
 
+        self.triplet_loss = TripletLoss(margin=1.) ### TRIPLET
+
     def train(self, dataset: BaseADDataset, net: BaseNet):
         logger = logging.getLogger()
 
@@ -75,11 +78,12 @@ class DeepSVDDTrainer(BaseTrainer):
         # Training
         logger.info('Starting training...')
         start_time = time.time()
-        es = EarlyStopping(patience=10)
+        es = EarlyStopping(patience=25)
         if (self.c.dim() == 1): # naive deep_svdd
             pass
         else: # multi-center deep_svdd
             cluster_assignments = pickle.load(open(os.path.join(self.xp_path,'cluster_assignments.pkl'), 'rb'))
+            cluster_numbers = np.unique(list(cluster_assignments.values())) ### TRIPLET
         net.train()
         for epoch in range(self.n_epochs):
 
@@ -107,6 +111,7 @@ class DeepSVDDTrainer(BaseTrainer):
                 else:
                     centers = torch.transpose(self.c,0,1)
                     dist = torch.zeros(outputs.shape[0], device=self.device)
+                    triplet = torch.zeros(outputs.shape[0], device=self.device) ### TRIPLET
                     for i in range(outputs.shape[0]):
                         # Sum dists from each data point to its corresponding cluster
                         # dist[i] = torch.sum((centers - outputs[i]) ** 2, dim=1).min()
@@ -114,12 +119,23 @@ class DeepSVDDTrainer(BaseTrainer):
                         # cluster_idx = torch.sum((centers - outputs[i]) ** 2, dim=1).argmin()
                         # dist[i] = torch.sum((centers[cluster_idx] - outputs[i]) ** 2, dim=0)
                         dist[i] = torch.sum((centers[cluster_assignments[idx[i]]] - outputs[i]) ** 2, dim=0)
+                        # Triplet Loss
+                        negative_clusters = np.delete(cluster_numbers,cluster_assignments[idx[i]])
+                        neg_example = np.random.choice(negative_clusters)
+                        ot = outputs[i].unsqueeze(1)
+                        pt = centers[cluster_assignments[idx[i]]].unsqueeze(1)
+                        nt = centers[neg_example].unsqueeze(1)
+                        triplet[i] = self.triplet_loss(anchor=ot,positive=pt,negative=nt) 
                 ### 
                 if self.objective == 'soft-boundary':
                     scores = dist - self.R ** 2
                     loss = self.R ** 2 + (1 / self.nu) * torch.mean(torch.max(torch.zeros_like(scores), scores))
                 else:
-                    loss = torch.mean(dist)
+                    if (self.c.dim() == 1): # naive deep svdd
+                        loss = torch.mean(dist)
+                    else: 
+                        loss = torch.mean(triplet) ### TRIPLET
+
                 loss.backward()
                 optimizer.step()
 
@@ -175,19 +191,30 @@ class DeepSVDDTrainer(BaseTrainer):
                         else:
                             centers = torch.transpose(self.c,0,1)
                             dist = torch.zeros(outputs.shape[0], device=self.device)
+                            triplet = torch.zeros(outputs.shape[0], device=self.device) ### TRIPLET
                             for i in range(outputs.shape[0]):
                                 # Sum dists from each data point to its corresponding cluster
                                 # dist[i] = torch.sum((centers - outputs[i]) ** 2, dim=1).min()
                                 ### Avoid gradient of min
-                                # cluster_idx = torch.sum((centers - outputs[i]) ** 2, dim=1).argmin()
-                                # dist[i] = torch.sum((centers[cluster_idx] - outputs[i]) ** 2, dim=0)
-                                dist[i] = torch.sum((centers[cluster_assignments[idx[i]]] - outputs[i]) ** 2, dim=0)
+                                cluster_idx = torch.sum((centers - outputs[i]) ** 2, dim=1).argmin()
+                                dist[i] = torch.sum((centers[cluster_idx] - outputs[i]) ** 2, dim=0)
+                                # dist[i] = torch.sum((centers[cluster_assignments[idx[i]]] - outputs[i]) ** 2, dim=0) ### THESE are not cluster assignments for validation data (only training data)!
+                                # Triplet Loss
+                                negative_clusters = np.delete(cluster_numbers,cluster_idx)
+                                neg_example = np.random.choice(negative_clusters)
+                                ot = outputs[i].unsqueeze(1)
+                                pt = centers[cluster_idx].unsqueeze(1)
+                                nt = centers[neg_example].unsqueeze(1)
+                                triplet[i] = self.triplet_loss(anchor=ot,positive=pt,negative=nt) 
                                 
                         if self.objective == 'soft-boundary':
                             scores = dist - self.R ** 2
                             loss = self.R ** 2 + (1 / self.nu) * torch.mean(torch.max(torch.zeros_like(scores), scores))
                         else:
-                            loss = torch.mean(dist)
+                            if (self.c.dim() == 1): # naive deep svdd
+                                loss = torch.mean(dist)
+                            else: 
+                                loss = torch.mean(triplet) ### TRIPLET
                         
                         loss_val += loss.item()
                         n_batches += 1
@@ -201,24 +228,24 @@ class DeepSVDDTrainer(BaseTrainer):
 
         logger.info('Finished training.')
 
-        # # UMAP Plot (on training data)
-        # # Get train data loader
-        # train_loader, _, _ = dataset.loaders(batch_size=self.batch_size, num_workers=self.n_jobs_dataloader)
+        # UMAP Plot (on training data)
+        # Get train data loader
+        train_loader, _, _ = dataset.loaders(batch_size=self.batch_size, num_workers=self.n_jobs_dataloader)
         
-        # output_data = []
-        # label_data = []
-        # with torch.no_grad():
-        #     for data in train_loader:
-        #         # get the inputs of the batch
-        #         inputs, labels, _ = data #labels are only for UMAP of hyperspheres
-        #         inputs = inputs.to(self.device)
-        #         outputs = net(inputs)
-        #         output_data.append(outputs)
-        #         label_data.append(labels)
-        # kmeans_centers = np.load(os.path.join(self.xp_path,'centers.npy'))
-        # output_data = torch.cat(output_data)
-        # label_data = torch.cat(label_data).numpy()
-        # self.latent_UMAP(output_data, label_data, kmeans_centers, pretrain_ae = False) ### USE pretrain_ae = False, no repeat
+        output_data = []
+        label_data = []
+        with torch.no_grad():
+            for data in train_loader:
+                # get the inputs of the batch
+                inputs, labels, _ = data #labels are only for UMAP of hyperspheres
+                inputs = inputs.to(self.device)
+                outputs = net(inputs)
+                output_data.append(outputs)
+                label_data.append(labels)
+        kmeans_centers = np.load(os.path.join(self.xp_path,'centers.npy'))
+        output_data = torch.cat(output_data)
+        label_data = torch.cat(label_data).numpy()
+        self.latent_UMAP(output_data, label_data, kmeans_centers, pretrain_ae = False, epoch=0) ### USE pretrain_ae = False, no repeat, ignore epoch arg
 
         return net
 
@@ -238,6 +265,11 @@ class DeepSVDDTrainer(BaseTrainer):
         net.eval()
         output_data = []
         label_data = []
+        if (self.c.dim() == 1): # naive deep_svdd
+            pass
+        else: # multi-center deep_svdd 
+            cluster_assignments = pickle.load(open(os.path.join(self.xp_path,'cluster_assignments.pkl'), 'rb')) # not used in testing
+            cluster_numbers = np.unique(list(cluster_assignments.values())) ### TRIPLET - to get number of clusters 
         with torch.no_grad():
             for data in test_loader:
                 inputs, labels, idx = data
@@ -253,18 +285,29 @@ class DeepSVDDTrainer(BaseTrainer):
                 else:
                     centers = torch.transpose(self.c,0,1)
                     dist = torch.zeros(outputs.shape[0], device=self.device)
+                    triplet = torch.zeros(outputs.shape[0], device=self.device) ### TRIPLET
                     for i in range(outputs.shape[0]):
                         # Sum dists from each data point to its corresponding cluster
                         # dist[i] = torch.sum((centers - outputs[i]) ** 2, dim=1).min()
                         ### Avoid gradient of min
                         cluster_idx = torch.sum((centers - outputs[i]) ** 2, dim=1).argmin()
                         dist[i] = torch.sum((centers[cluster_idx] - outputs[i]) ** 2, dim=0)
+                        # Triplet Loss
+                        negative_clusters = np.delete(cluster_numbers,cluster_idx)
+                        neg_example = np.random.choice(negative_clusters)
+                        ot = outputs[i].unsqueeze(1)
+                        pt = centers[cluster_idx].unsqueeze(1)
+                        nt = centers[neg_example].unsqueeze(1)
+                        triplet[i] = self.triplet_loss(anchor=ot,positive=pt,negative=nt)
                 ###
                 if self.objective == 'soft-boundary':
                     scores = dist - self.R ** 2
                 else:
-                    scores = dist
-
+                    if (self.c.dim() == 1): # naive deep svdd
+                        scores = dist
+                    else: 
+                        # scores = triplet ### TRIPLET
+                        scores = dist
                 # Save triples of (idx, label, score) in a list
                 idx_label_score += list(zip(idx.cpu().data.numpy().tolist(),
                                             labels.cpu().data.numpy().tolist(),
@@ -295,13 +338,14 @@ class DeepSVDDTrainer(BaseTrainer):
         plt.xlabel('False Positive Rate')
         plt.grid(False)
         plt.savefig(os.path.join(self.xp_path,f'{self.K}-cluster-roc-curve.png'),bbox_inches='tight')
+        plt.clf()
 
         #UMAP (same umap model fit in training) - use anomaly_data = True
         # Plot with testing data
-        kmeans_centers = np.load(os.path.join(self.xp_path,'centers.npy'))
-        output_data = torch.cat(output_data)
-        label_data = torch.cat(label_data).numpy()
-        self.latent_UMAP(output_data, label_data, kmeans_centers, pretrain_ae = True, anomaly_data = True) ### USE pretrain_ae = False
+        # kmeans_centers = np.load(os.path.join(self.xp_path,'centers.npy'))
+        # output_data = torch.cat(output_data)
+        # label_data = torch.cat(label_data).numpy()
+        # self.latent_UMAP(output_data, label_data, kmeans_centers, pretrain_ae = True, anomaly_data = True) ### USE pretrain_ae = False
 
         logger.info('Finished testing.')
 
@@ -405,6 +449,7 @@ class DeepSVDDTrainer(BaseTrainer):
         if pretrain_ae and not anomaly_data and not repeat:
             plt.title('UMAP projection of the Deep SVDD Latent Space (Pre-trained AE)', fontsize=18)
             plt.savefig(os.path.join(self.xp_path,f'{self.K}-cluster-umap-scaled-pretrained-ae.png'),bbox_inches='tight')
+            plt.clf()
         ### elif not pretrain_ae and not anomaly_data: # embedding for trained deep SVDD
         ### elif pretrain_ae and not anomaly_data and repeat:
         elif not pretrain_ae and not anomaly_data and not repeat:
@@ -418,10 +463,12 @@ class DeepSVDDTrainer(BaseTrainer):
                 plt.gca().set_xlim([self.x_lim[0]-5,self.x_lim[1]+5])
                 plt.gca().set_ylim([self.y_lim[0]-5,self.y_lim[1]+5])
             plt.savefig(os.path.join(self.xp_path,f'{self.K}-cluster-umap-scaled-trained-model-epoch-{epoch}.png'),bbox_inches='tight')
+            plt.clf()
         ### elif not pretrain_ae and anomaly_data: # embedding for trained deep SVDD on test data
         elif pretrain_ae and anomaly_data:
             plt.title('UMAP projection of Deep SVDD Trained Model on Test Data', fontsize=18)
             plt.savefig(os.path.join(self.xp_path,f'{self.K}-cluster-umap-scaled-trained-model-test-data.png'),bbox_inches='tight')
+            plt.clf()
         else:      
             pass # no condition for pretrained AE with test data
         plt.close()

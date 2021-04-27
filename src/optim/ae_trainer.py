@@ -2,6 +2,7 @@ from base.base_trainer import BaseTrainer
 from base.base_dataset import BaseADDataset
 from base.base_net import BaseNet
 from sklearn.metrics import roc_auc_score
+from loss.losses import MSSIM
 
 import logging
 import time
@@ -16,6 +17,8 @@ class AETrainer(BaseTrainer):
                  batch_size: int = 128, weight_decay: float = 1e-6, device: str = 'cuda', n_jobs_dataloader: int = 0):
         super().__init__(optimizer_name, lr, n_epochs, lr_milestones, batch_size, weight_decay, device,
                          n_jobs_dataloader)
+        
+        self.mssim_loss = MSSIM() ### MSSIM - 3 channel images by default
 
     def train(self, dataset: BaseADDataset, ae_net: BaseNet):
         logger = logging.getLogger()
@@ -56,8 +59,9 @@ class AETrainer(BaseTrainer):
 
                 # Update network parameters via backpropagation: forward + backward + optimize
                 outputs = ae_net(inputs)
-                scores = torch.sum((outputs - inputs) ** 2, dim=tuple(range(1, outputs.dim())))
-                loss = torch.mean(scores)
+                # scores = torch.sum((outputs - inputs) ** 2, dim=tuple(range(1, outputs.dim())))
+                # loss = torch.mean(scores) 
+                loss = self.mssim_loss(outputs, inputs) ### MSSIM
                 loss.backward()
                 optimizer.step()
 
@@ -97,7 +101,8 @@ class AETrainer(BaseTrainer):
                 inputs = inputs.to(self.device)
                 outputs = ae_net(inputs)
                 scores = torch.sum((outputs - inputs) ** 2, dim=tuple(range(1, outputs.dim())))
-                loss = torch.mean(scores)
+                # loss = torch.mean(scores)
+                loss = self.mssim_loss(outputs, inputs) ### MSSIM
 
                 # Save triple of (idx, label, score) in a list
                 idx_label_score += list(zip(idx.cpu().data.numpy().tolist(),

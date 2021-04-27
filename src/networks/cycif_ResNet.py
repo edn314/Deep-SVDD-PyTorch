@@ -17,14 +17,14 @@ class CyCIF_ResidualNetwork(BaseNet):
         number_features = resnet50.fc.in_features
 
         # Build Encoder
-        modules = list(resnet50.children())[:-2] ## CHANGE
+        modules = list(resnet50.children())[:-2] ## CHANGE [:-1]
         resnet50 = nn.Sequential(*modules)
-
-        for param in resnet50.parameters():
-            param.requires_grad = True ## CHANGE
-        
+        ### for all frozen test - FALSE ###
+        # for param in resnet50.parameters():
+        #     param.requires_grad = True
+        ### ###
         self.encoder = resnet50
-        self.encoder_output = nn.Linear(number_features*64, self.rep_dim, bias=False) ## CHANGE
+        self.encoder_output = nn.Linear(number_features*64, self.rep_dim, bias=False) ## CHANGE number_features*4
 
     def forward(self, x):
         # Encoder (same as the Deep SVDD network above)
@@ -47,14 +47,14 @@ class CyCIF_ResNetAE(BaseNet):
         number_features = resnet50.fc.in_features
 
         # Build Encoder
-        modules = list(resnet50.children())[:-2] ## CHANGE
+        modules = list(resnet50.children())[:-2] ## CHANGE [:-1]
         resnet50 = nn.Sequential(*modules)
-
-        for param in resnet50.parameters():
-            param.requires_grad = True ## CHANGE
-        
+        ### for all frozen test - FALSE ###
+        # for param in resnet50.parameters():
+        #     param.requires_grad = True
+        ### ###
         self.encoder = resnet50
-        self.encoder_output = nn.Linear(number_features*64, self.rep_dim, bias=False) ## CHANGE
+        self.encoder_output = nn.Linear(number_features*64, self.rep_dim, bias=False) ## CHANGE number_features*4
 
         # Build Decoder
         modules = []

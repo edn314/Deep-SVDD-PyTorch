@@ -10,6 +10,8 @@ from torchvision.utils import make_grid
 def plot_images_labels(x: torch.tensor, label, export_img, title: str = '', nrow=8, padding=2, normalize=False, pad_value=0):
     """Plot separate images of shape (H x W) colored by their binary label."""
 
+    if (x.dim() == 4): # if there is more than one channel
+        x = x[0]
     grid = make_grid(x, nrow=nrow, padding=padding, normalize=normalize, pad_value=pad_value)
     npgrid = grid.cpu().numpy()
 
